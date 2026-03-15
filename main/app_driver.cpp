@@ -7,6 +7,7 @@
 */
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,9 +24,18 @@ using namespace esp_matter::cluster;
 
 static const char *TAG = "app_driver";
 
+static esp_timer_handle_t factory_reset_timer = NULL;
+
 static int current_number_of_presses_counted = 1;
 static bool is_multipress = 0;
+static bool is_long_press = false;
 static uint8_t idlePosition = 0;
+
+static void factory_reset_timer_cb(void *arg)
+{
+    ESP_LOGI(TAG, "Factory reset triggered (button held for 10s)");
+    esp_matter::factory_reset();
+}
 
 esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_t endpoint_id, uint32_t cluster_id,
                                       uint32_t attribute_id, esp_matter_attr_val_t *val)
@@ -49,14 +59,25 @@ static void app_driver_button_initial_pressed(void *arg, void *data)
 
 static void app_driver_button_release(void *arg, void *data)
 {
-    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() {
+    esp_timer_stop(factory_reset_timer);
+    bool was_long_press = is_long_press;
+    is_long_press = false;
+    uint8_t previousPosition = 1;
+    chip::DeviceLayer::SystemLayer().ScheduleLambda([was_long_press, previousPosition]() {
         chip::app::Clusters::Switch::Attributes::CurrentPosition::Set(switch_endpoint_id, idlePosition);
+        if (was_long_press) {
+            switch_cluster::event::send_long_release(switch_endpoint_id, previousPosition);
+        } else {
+            switch_cluster::event::send_short_release(switch_endpoint_id, previousPosition);
+        }
     });
 }
 
 static void app_driver_button_long_pressed(void *arg, void *data)
 {
-    ESP_LOGI(TAG, "Long button pressed");
+    ESP_LOGI(TAG, "Long button pressed, starting factory reset timer (7.5s remaining)");
+    is_long_press = true;
+    esp_timer_start_once(factory_reset_timer, 7500000);
     uint8_t newPosition = 1;
     chip::DeviceLayer::SystemLayer().ScheduleLambda([newPosition]() {
         chip::app::Clusters::Switch::Attributes::CurrentPosition::Set(switch_endpoint_id, newPosition);
@@ -91,6 +112,7 @@ static void app_driver_button_multipress_ongoing(void *arg, void *data)
 
 static void app_driver_button_multipress_complete(void *arg, void *data)
 {
+    esp_timer_stop(factory_reset_timer);
     ESP_LOGI(TAG, "Multipress Complete");
     uint8_t previousPosition = 1;
     uint16_t endpoint_id = switch_endpoint_id;
@@ -113,9 +135,20 @@ static void app_driver_button_multipress_complete(void *arg, void *data)
 
 app_driver_handle_t app_driver_button_init()
 {
+    /* Initialize factory reset timer */
+    const esp_timer_create_args_t timer_args = {
+        .callback = factory_reset_timer_cb,
+        .arg = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "factory_reset",
+    };
+    esp_timer_create(&timer_args, &factory_reset_timer);
+
     /* Initialize button */
     button_handle_t handle = NULL;
-    const button_config_t btn_cfg = {0};
+    const button_config_t btn_cfg = {
+        .long_press_time = 1000,
+    };
     const button_gpio_config_t btn_gpio_cfg = {
         .gpio_num = BUTTON_GPIO_PIN,
         .active_level = 0,

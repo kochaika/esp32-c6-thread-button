@@ -18,7 +18,6 @@
 #include <log_heap_numbers.h>
 
 #include <app_priv.h>
-#include <app_reset.h>
 #include <app/util/attribute-storage.h>
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
@@ -197,7 +196,6 @@ extern "C" void app_main()
 
     /* Initialize button driver */
     app_driver_handle_t button_handle = app_driver_button_init();
-    app_reset_button_register(button_handle);
 
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
@@ -229,6 +227,8 @@ extern "C" void app_main()
     cluster::switch_cluster::feature::momentary_switch_multi_press::config_t msm;
     msm.multi_press_max = 5;
     cluster::switch_cluster::feature::momentary_switch_multi_press::add(switch_cluster_handle, &msm);
+    cluster::switch_cluster::feature::momentary_switch_release::add(switch_cluster_handle);
+    cluster::switch_cluster::feature::momentary_switch_long_press::add(switch_cluster_handle);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD && CHIP_DEVICE_CONFIG_ENABLE_WIFI_STATION
     // Enable secondary network interface
