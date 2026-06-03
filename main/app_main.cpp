@@ -9,6 +9,9 @@
 #include <esp_err.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
+#if CONFIG_PM_ENABLE
+#include <esp_pm.h>
+#endif
 
 #include <esp_matter.h>
 #include <esp_matter_console.h>
@@ -192,6 +195,17 @@ extern "C" void app_main()
     /* Initialize the ESP NVS layer */
     nvs_flash_init();
 
+#if CONFIG_PM_ENABLE
+    esp_pm_config_t pm_config = {};
+    pm_config.max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+    pm_config.min_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+    pm_config.light_sleep_enable = true;
+#endif
+    err = esp_pm_configure(&pm_config);
+    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to configure power management, err:%d", err));
+#endif
+
     MEMORY_PROFILER_DUMP_HEAP_STAT("Bootup");
 
     /* Initialize button driver */
@@ -281,9 +295,4 @@ extern "C" void app_main()
 #endif
     esp_matter::console::init();
 #endif
-
-    while (true) {
-        MEMORY_PROFILER_DUMP_HEAP_STAT("Idle");
-        vTaskDelay(10000 / portTICK_PERIOD_MS);
-    }
 }

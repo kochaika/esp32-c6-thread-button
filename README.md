@@ -2,7 +2,7 @@
 
 # XIAO ESP32-C6 Matter over Thread button (Generic Switch)
 
-This is a Matter **Generic Switch** (device type 0x000F) — a momentary button that sends press/release/multipress events over Thread. Built with
+This is a Matter **Generic Switch** (device type 0x000F) — a low-power momentary button that sends press/release/multipress events over Thread. Built with
 [ESP-IDF](https://github.com/espressif/esp-idf) and
 [Espressif's SDK for Matter](https://github.com/espressif/esp-matter).
 
@@ -37,6 +37,13 @@ Navigate to this project directory.
 2. `idf.py build`
 3. `idf.py -p /dev/cu.usbmodem2101 flash`
 
+The default ESP32-C6 profile is configured for battery operation: Matter over Thread, Wi-Fi disabled, BLE used only for commissioning, OpenThread MTD, Matter LIT ICD, tickless idle, light sleep, IEEE 802.15.4 sleep, and GPIO button wake. Do not use `sdkconfig.defaults.c6_wifi_thread` for battery-life measurements; that profile enables Wi-Fi station mode.
+
+If regenerating `sdkconfig` from defaults, use:
+```bash
+idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32c6" reconfigure
+```
+
 ## Debug
 Should be enabled before. It was disabled [here](https://github.com/kochaika/esp32-c6-thread-led/commit/52e125ca0df499bbaefacb9cd5e2c69a360517ba).
 ```bash
@@ -63,11 +70,30 @@ esptool.py --chip esp32c6 --port /dev/cu.usbmodem2101 write_flash 0x10000 out/ff
 An external UFL antenna is used for Thread communication. The FM8625H RF switch on the XIAO ESP32-C6 is configured at startup via GPIO3 (enable) and GPIO14 (antenna select).
 
 ### Button
-Push button on **GPIO20** (XIAO ESP32-C6 D9 pin), active low. The button is a Matter momentary switch with the following supported events:
+Push button on **D0 / GPIO0**, active low.
+
+The button driver enables GPIO power-save mode. While idle, the periodic button scan timer is stopped; pressing the button wakes the device and resumes scanning.
+
+The button is a Matter momentary switch with the following supported events:
 
 | Action | Matter Event |
 |--------|-------------|
 | Single press | InitialPress |
-| Release | CurrentPosition reset to 0 |
-| Long press (5s) | LongPress (also triggers factory reset) |
+| Release | ShortRelease or LongRelease, CurrentPosition reset to 0 |
+| Long press (2.5s) | LongPress |
 | Multi-press | MultiPressOngoing + MultiPressComplete (up to 5 presses) |
+| Hold for 10s | Factory reset |
+
+## Low-power behavior
+
+This firmware is configured as a Long Idle Time Intermittently Connected Device (LIT ICD):
+
+| Parameter | Value |
+|-----------|-------|
+| Slow poll interval | 20000 ms |
+| Fast poll interval | 500 ms |
+| Idle mode interval | 600 s |
+| Active mode duration | 1000 ms |
+| Active mode threshold | 5000 ms |
+
+Button activity notifies the ICD manager so the device remains active long enough to send Matter switch events after waking.

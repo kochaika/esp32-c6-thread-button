@@ -16,8 +16,8 @@
 #include "esp_openthread_types.h"
 #endif
 
-#define BUTTON_GPIO      20
-#define BUTTON_GPIO_PIN  GPIO_NUM_20
+#define BUTTON_GPIO      CONFIG_BUTTON_GPIO
+#define BUTTON_GPIO_PIN  ((gpio_num_t)CONFIG_BUTTON_GPIO)
 
 extern uint16_t switch_endpoint_id;
 

@@ -7,5 +7,12 @@ menu "Example Configuration"
             Enable this option to include memory profiling features in the example.
             This will allow you to monitor memory usage during runtime.
 
-endmenu
+    config BUTTON_GPIO
+        int "Button GPIO"
+        range 0 30
+        default 0
+        help
+            GPIO used by the active-low button. The default is XIAO ESP32-C6
+            D0/GPIO0.
 
+endmenu
