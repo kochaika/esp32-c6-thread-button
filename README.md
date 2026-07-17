@@ -80,7 +80,7 @@ The button is a Matter momentary switch with the following supported events:
 |--------|-------------|
 | Single press | InitialPress |
 | Release | ShortRelease or LongRelease, CurrentPosition reset to 0 |
-| Long press (2.5s) | LongPress |
+| Long press (1s) | LongPress |
 | Multi-press | MultiPressOngoing + MultiPressComplete (up to 5 presses) |
 | Hold for 10s | Factory reset |
 

@@ -105,9 +105,9 @@ static void app_driver_button_release(void *arg, void *data)
 static void app_driver_button_long_pressed(void *arg, void *data)
 {
     notify_icd_network_activity();
-    ESP_LOGI(TAG, "Long button pressed, starting factory reset timer (7.5s remaining)");
+    ESP_LOGI(TAG, "Long button pressed, starting factory reset timer (9s remaining)");
     is_long_press = true;
-    esp_timer_start_once(factory_reset_timer, 7500000);
+    esp_timer_start_once(factory_reset_timer, 9000000);
     uint8_t newPosition = 1;
     chip::DeviceLayer::SystemLayer().ScheduleLambda([newPosition]() {
         driver_set_switch_current_position(switch_endpoint_id, newPosition);
