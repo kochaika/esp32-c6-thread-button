@@ -43,6 +43,8 @@ using namespace chip::DeviceLayer;
 
 static const char *TAG = "app_main";
 uint16_t switch_endpoint_id = 0;
+uint16_t switch2_endpoint_id = 0;
+uint16_t power_source_endpoint_id = 0;
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -57,11 +59,18 @@ namespace {
 constexpr const uint8_t kNamespaceSwitches = 0x43;
 // Switches Namespace: 0x43, tag 0 (On)
 constexpr const uint8_t kTagSwitchOn = 0;
-// Common Position Namespace: 8, tag: 1 (Right)
+// Common Position Namespace: 8, tag: 0 (Left), tag: 1 (Right)
 constexpr const uint8_t kNamespacePosition = 8;
+constexpr const uint8_t kTagPositionLeft = 0;
 constexpr const uint8_t kTagPositionRight = 1;
 
+// Button 1 is tagged "Left", button 2 "Right", so controllers can tell the two
+// otherwise-identical switches apart.
 const Descriptor::Structs::SemanticTagStruct::Type gEp1TagList[] = {
+    {.namespaceID = kNamespaceSwitches, .tag = kTagSwitchOn},
+    {.namespaceID = kNamespacePosition, .tag = kTagPositionLeft}
+};
+const Descriptor::Structs::SemanticTagStruct::Type gEp2TagList[] = {
     {.namespaceID = kNamespaceSwitches, .tag = kTagSwitchOn},
     {.namespaceID = kNamespacePosition, .tag = kTagPositionRight}
 };
@@ -182,6 +191,35 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     return err;
 }
 
+// Create a Generic Switch endpoint configured as a classic momentary switch
+// (MS | MSR | MSL | MSM). Feature order matters: MSR must be added before MSL
+// and MSM, which both require Momentary Switch Release to already be present.
+static endpoint_t *create_generic_switch_endpoint(node_t *node, app_driver_handle_t button_handle)
+{
+    generic_switch::config_t switch_config;
+    switch_config.switch_cluster.feature_flags =
+        cluster::switch_cluster::feature::momentary_switch::get_id();
+
+    endpoint_t *endpoint = generic_switch::create(node, &switch_config, ENDPOINT_FLAG_NONE, button_handle);
+    if (endpoint == nullptr) {
+        return nullptr;
+    }
+
+    /* Add descriptor tag_list feature */
+    cluster_t *descriptor = cluster::get(endpoint, Descriptor::Id);
+    descriptor::feature::tag_list::add(descriptor);
+
+    /* Add switch features (classic momentary switch model, no Action Switch) */
+    cluster_t *switch_cluster_handle = cluster::get(endpoint, Switch::Id);
+    cluster::switch_cluster::feature::momentary_switch_release::add(switch_cluster_handle);
+    cluster::switch_cluster::feature::momentary_switch_long_press::add(switch_cluster_handle);
+    cluster::switch_cluster::feature::momentary_switch_multi_press::config_t msm;
+    msm.multi_press_max = 5;
+    cluster::switch_cluster::feature::momentary_switch_multi_press::add(switch_cluster_handle, &msm);
+
+    return endpoint;
+}
+
 extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
@@ -208,8 +246,15 @@ extern "C" void app_main()
 
     MEMORY_PROFILER_DUMP_HEAP_STAT("Bootup");
 
-    /* Initialize button driver */
-    app_driver_handle_t button_handle = app_driver_button_init();
+    /* Per-button contexts persist for the app lifetime (static). */
+    static button_ctx_t button1_ctx = {};
+    static button_ctx_t button2_ctx = {};
+
+    /* Initialize button drivers */
+    app_driver_handle_t button1_handle = app_driver_button_init(BUTTON_GPIO_PIN, &button1_ctx);
+    ABORT_APP_ON_FAILURE(button1_handle != nullptr, ESP_LOGE(TAG, "Failed to initialize button 1"));
+    app_driver_handle_t button2_handle = app_driver_button_init(BUTTON2_GPIO_PIN, &button2_ctx);
+    ABORT_APP_ON_FAILURE(button2_handle != nullptr, ESP_LOGE(TAG, "Failed to initialize button 2"));
 
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
@@ -220,35 +265,62 @@ extern "C" void app_main()
 
     MEMORY_PROFILER_DUMP_HEAP_STAT("node created");
 
-    /* Create Generic Switch endpoint */
-    generic_switch::config_t switch_config;
-    switch_config.switch_cluster.feature_flags =
-        cluster::switch_cluster::feature::momentary_switch::get_id();
+    /* Create one Generic Switch endpoint per button (identical behavior) */
+    endpoint_t *switch1_ep = create_generic_switch_endpoint(node, button1_handle);
+    ABORT_APP_ON_FAILURE(switch1_ep != nullptr, ESP_LOGE(TAG, "Failed to create generic switch endpoint 1"));
+    switch_endpoint_id = endpoint::get_id(switch1_ep);
+    button1_ctx.endpoint_id = switch_endpoint_id;
+    ESP_LOGI(TAG, "Generic Switch 1 created with endpoint_id %d", switch_endpoint_id);
 
-    endpoint_t *endpoint = generic_switch::create(node, &switch_config, ENDPOINT_FLAG_NONE, button_handle);
-    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create generic switch endpoint"));
+    /* Second Generic Switch endpoint (button 2) on ep2. */
+    endpoint_t *switch2_ep = create_generic_switch_endpoint(node, button2_handle);
+    ABORT_APP_ON_FAILURE(switch2_ep != nullptr, ESP_LOGE(TAG, "Failed to create generic switch endpoint 2"));
+    switch2_endpoint_id = endpoint::get_id(switch2_ep);
+    button2_ctx.endpoint_id = switch2_endpoint_id;
+    ESP_LOGI(TAG, "Generic Switch 2 created with endpoint_id %d", switch2_endpoint_id);
 
-    switch_endpoint_id = endpoint::get_id(endpoint);
-    ESP_LOGI(TAG, "Generic Switch created with endpoint_id %d", switch_endpoint_id);
+    /* Create the Power Source endpoint (device type 0x0011) last, so the two
+     * buttons occupy ep1/ep2 and the battery is on ep3.
+     *
+     * IMPORTANT: Matter endpoint ids must stay stable for a given commissioned
+     * device — controllers cache which endpoint is which. If you change this
+     * layout (add/reorder endpoints) on an already-commissioned device you must
+     * re-commission it (factory reset + re-add) so controllers re-learn it,
+     * otherwise entities like the battery show up as "Unavailable".
+     *
+     * BatPercentRemaining is created here with a placeholder value and then kept
+     * up to date by the battery ADC driver. */
+    endpoint::power_source::config_t power_source_config;
+    power_source_config.power_source.status = 1;  /* PowerSourceStatus: Active */
+    power_source_config.power_source.order = 0;
+    power_source_config.power_source.feature_flags =
+        cluster::power_source::feature::battery::get_id();
+    /* Battery-feature mandatory attributes */
+    power_source_config.power_source.features.battery.bat_charge_level = 0;      /* BatChargeLevel: OK */
+    power_source_config.power_source.features.battery.bat_replacement_needed = false;
+    power_source_config.power_source.features.battery.bat_replaceability = 1;    /* NotReplaceable */
 
-    /* Add descriptor tag_list feature */
-    cluster_t *descriptor = cluster::get(endpoint, Descriptor::Id);
-    descriptor::feature::tag_list::add(descriptor);
+    endpoint_t *power_source_ep =
+        endpoint::power_source::create(node, &power_source_config, ENDPOINT_FLAG_NONE, nullptr);
+    ABORT_APP_ON_FAILURE(power_source_ep != nullptr, ESP_LOGE(TAG, "Failed to create power source endpoint"));
 
-    /* Add additional switch features */
-    cluster_t *switch_cluster_handle = cluster::get(endpoint, Switch::Id);
-    cluster::switch_cluster::feature::action_switch::add(switch_cluster_handle);
-    cluster::switch_cluster::feature::momentary_switch_multi_press::config_t msm;
-    msm.multi_press_max = 5;
-    cluster::switch_cluster::feature::momentary_switch_multi_press::add(switch_cluster_handle, &msm);
-    cluster::switch_cluster::feature::momentary_switch_release::add(switch_cluster_handle);
-    cluster::switch_cluster::feature::momentary_switch_long_press::add(switch_cluster_handle);
+    /* Associate the battery with the first switch endpoint */
+    endpoint::set_parent_endpoint(power_source_ep, switch1_ep);
+
+    /* BatPercentRemaining is optional and in half-percent units (0-200).
+     * Placeholder value 154 = 77%; overwritten by the first real ADC reading. */
+    cluster_t *power_source_cluster = cluster::get(power_source_ep, PowerSource::Id);
+    cluster::power_source::attribute::create_bat_percent_remaining(power_source_cluster, nullable<uint8_t>(154),
+                                                                   nullable<uint8_t>(0), nullable<uint8_t>(200));
+
+    power_source_endpoint_id = endpoint::get_id(power_source_ep);
+    ESP_LOGI(TAG, "Power Source (battery) created with endpoint_id %d", power_source_endpoint_id);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD && CHIP_DEVICE_CONFIG_ENABLE_WIFI_STATION
     // Enable secondary network interface
     secondary_network_interface::config_t secondary_network_interface_config;
-    endpoint = endpoint::secondary_network_interface::create(node, &secondary_network_interface_config, ENDPOINT_FLAG_NONE, nullptr);
-    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create secondary network interface endpoint"));
+    endpoint_t *secondary_network_interface_ep = endpoint::secondary_network_interface::create(node, &secondary_network_interface_config, ENDPOINT_FLAG_NONE, nullptr);
+    ABORT_APP_ON_FAILURE(secondary_network_interface_ep != nullptr, ESP_LOGE(TAG, "Failed to create secondary network interface endpoint"));
 #endif
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
@@ -276,9 +348,16 @@ extern "C" void app_main()
 
     MEMORY_PROFILER_DUMP_HEAP_STAT("matter started");
 
-    /* Set semantic tags on switch endpoint */
-    endpoint_t *ep1 = endpoint::get(switch_endpoint_id);
-    endpoint::set_semantic_tags(ep1, gEp1TagList, 2);
+    /* Set semantic tags on both switch endpoints */
+    endpoint::set_semantic_tags(endpoint::get(switch_endpoint_id), gEp1TagList, 2);
+    endpoint::set_semantic_tags(endpoint::get(switch2_endpoint_id), gEp2TagList, 2);
+
+    /* Start battery ADC sampling now that Matter is up and the Power Source
+     * endpoint exists (the driver updates BatPercentRemaining on that endpoint). */
+    err = app_driver_battery_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize battery driver, err:%d", err);
+    }
 
 #if CONFIG_ENABLE_ENCRYPTED_OTA
     err = esp_matter_ota_requestor_encrypted_init(s_decryption_key, s_decryption_key_len);

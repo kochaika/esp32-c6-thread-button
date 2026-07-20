@@ -69,12 +69,24 @@ esptool.py --chip esp32c6 --port /dev/cu.usbmodem2101 write_flash 0x10000 out/ff
 ### Antenna
 An external UFL antenna is used for Thread communication. The FM8625H RF switch on the XIAO ESP32-C6 is configured at startup via GPIO3 (enable) and GPIO14 (antenna select).
 
-### Button
-Push button on **D0 / GPIO0**, active low.
+### Buttons
+Two push buttons, both active low:
+
+| Button | Pin | Matter endpoint |
+|--------|-----|-----------------|
+| Button 1 | **D0 / GPIO0** | Generic Switch (semantic tag: Left) |
+| Button 2 | **D2 / GPIO2** | Generic Switch (semantic tag: Right) |
+
+The device exposes **two independent Generic Switch endpoints** with identical
+behavior; each button keeps its own press/multipress/long-press state and its
+own factory-reset timer. GPIOs are build-time options (`CONFIG_BUTTON_GPIO`,
+`CONFIG_BUTTON2_GPIO`).
 
 The button driver enables GPIO power-save mode. While idle, the periodic button scan timer is stopped; pressing the button wakes the device and resumes scanning.
 
-The button is a Matter momentary switch with the following supported events:
+Each button is a Matter **momentary switch** using the classic event model
+(FeatureMap = `MS | MSR | MSL | MSM`; the mutually-exclusive Action Switch
+feature is intentionally *not* enabled). It supports the following events:
 
 | Action | Matter Event |
 |--------|-------------|
@@ -83,6 +95,36 @@ The button is a Matter momentary switch with the following supported events:
 | Long press (1s) | LongPress |
 | Multi-press | MultiPressOngoing + MultiPressComplete (up to 5 presses) |
 | Hold for 10s | Factory reset |
+
+> Note: the switch features are added in the order MSR → MSL → MSM, because
+> Momentary Switch LongPress and MultiPress both require Momentary Switch Release
+> to already be present. Changing the FeatureMap requires re-interviewing (or
+> re-commissioning) the device so controllers pick up the new event set.
+
+### Battery / Power Source
+
+A **Power Source** endpoint (device type `0x0011`, Battery feature) reports the
+battery charge to the Matter network via `BatPercentRemaining` (half-percent
+units, `0-200`). It is parented to the first switch endpoint.
+
+**Wiring:** a resistor voltage divider from `BAT+` to `GND` with its midpoint on
+**D1 / GPIO1** (`CONFIG_BATTERY_ADC_GPIO`, must be an ADC1 channel). Use two
+**equal** resistors so the divider halves the cell voltage (4.2 V → 2.1 V, safely
+within the ADC range); `BATTERY_DIVIDER_RATIO` in `app_priv.h` (default `2`)
+must match. Prefer large resistors (e.g. 1 MΩ) — or gate the divider with a
+MOSFET — to limit the constant drain, since the divider is always connected.
+
+**Firmware:** `app_driver_battery_init()` configures ADC1 (12 dB attenuation,
+curve-fitting calibration), samples every **30 minutes** (averaging **16** raw
+ADC reads per sample to suppress noise), converts the cell voltage to a
+percentage via an approximate Li-Po discharge curve, and updates
+`BatPercentRemaining` only when it moves by ≥3%. An initial reading is taken at
+boot. The sampling interval, averaging count, and delta live at the top of
+`app_driver.cpp`.
+
+Because this is a LIT ICD (sleepy) device, a changed value reaches the
+controller when the device next becomes active (bounded by the ~10 min idle
+interval, or immediately on a button press).
 
 ## Low-power behavior
 

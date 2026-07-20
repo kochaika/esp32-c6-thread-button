@@ -12,7 +12,24 @@ menu "Example Configuration"
         range 0 30
         default 0
         help
-            GPIO used by the active-low button. The default is XIAO ESP32-C6
-            D0/GPIO0.
+            GPIO used by the first active-low button. The default is XIAO
+            ESP32-C6 D0/GPIO0.
+
+    config BUTTON2_GPIO
+        int "Second Button GPIO"
+        range 0 30
+        default 2
+        help
+            GPIO used by the second active-low button. The default is XIAO
+            ESP32-C6 D2/GPIO2.
+
+    config BATTERY_ADC_GPIO
+        int "Battery sense ADC GPIO"
+        range 0 6
+        default 1
+        help
+            ADC1-capable GPIO connected to the midpoint of the battery voltage
+            divider. Must be an ADC1 channel (GPIO0-GPIO6 on ESP32-C6). The
+            default is XIAO ESP32-C6 D1/GPIO1.
 
 endmenu

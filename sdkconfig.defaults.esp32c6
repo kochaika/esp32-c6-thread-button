@@ -87,10 +87,9 @@ CONFIG_ENABLE_WIFI_AP=n
 CONFIG_BUTTON_PERIOD_TIME_MS=20
 CONFIG_BUTTON_LONG_PRESS_TIME_MS=1000
 CONFIG_BUTTON_GPIO=0
+CONFIG_BUTTON2_GPIO=2
+CONFIG_BATTERY_ADC_GPIO=1
 CONFIG_GPIO_BUTTON_SUPPORT_POWER_SAVE=y
-
-# Enable chip shell
-CONFIG_ENABLE_CHIP_SHELL=n
 
 #CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 #CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED=y
@@ -102,3 +101,23 @@ CONFIG_ENABLE_CHIP_SHELL=n
 # Exclude unused clusters to optimize flash and memory usage
 # Note: COLOR_CONTROL must remain enabled as level-control depends on it
 # CONFIG_SUPPORT_COLOR_CONTROL_CLUSTER=n
+
+# DEBUG
+
+# Enable chip shell
+CONFIG_ENABLE_CHIP_SHELL=n
+
+#CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
+#CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# --- Route the console to the XIAO USB-C port (native USB Serial/JTAG) as the
+#     primary console; also enables serial *input* (needed for the Matter shell) ---
+#CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+#CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED=y
+
+# --- Keep the serial link alive: light sleep / tickless idle / peripheral
+#     power-down all kill the USB Serial/JTAG console when the device idles ---
+#CONFIG_PM_ENABLE=n
+#CONFIG_FREERTOS_USE_TICKLESS_IDLE=n
+#CONFIG_PM_POWER_DOWN_PERIPHERAL_IN_LIGHT_SLEEP=n
+
